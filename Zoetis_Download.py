@@ -3,8 +3,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from msedge.selenium_tools import Edge, EdgeOptions
 from webdriver_manager.microsoft import EdgeChromiumDriverManager
-from selenium.webdriver.common.action_chains import ActionChains
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 import os
 from time import sleep
 
@@ -12,16 +11,15 @@ class Zoetis:
     def __init__(self):
         self.gui_queue = None
         self.login_url = r'https://www2.zoetisus.com/login'
-        self.allfilelist = {}
+        self.allfilelist = []
         self.downloadedlist = []
 
 
     def start_edge(self, download_pdf=True, download_prompt=False):
-        self.downloadPath = os.path.join(os.getcwd(), 'Downloads')
+        self.downloadPath = os.path.join(os.getcwd(), 'Downloads','Zoetis')
         if not os.path.isdir(self.downloadPath):
             os.makedirs(self.downloadPath)
 
-        # self.existing_files = os.listdir(self.downloadPath)
         self.existing_files = []
 
         edge_options = EdgeOptions()
@@ -33,7 +31,9 @@ class Zoetis:
                 "plugins.always_open_pdf_externally": download_pdf,
                 "download.default_directory": self.downloadPath,
                 "safebrowsing.enabled": False,
-                "safebrowsing.disable_download_protection": True
+                "safebrowsing.disable_download_protection": True,
+                'profile.default_content_setting_values.automatic_downloads': 1
+
             }
         )
         self.driver = Edge(
@@ -108,7 +108,7 @@ class Zoetis:
             payment.click()
             sleep(1)
 
-            parent_tab = self.driver.window_handles[0]
+
             child_tab = self.driver.window_handles[1]
             self.driver.switch_to.window(child_tab)
 
@@ -128,24 +128,74 @@ class Zoetis:
             viewinvoice.click()
             sleep(2)
 
-            docnumXpath = '//*[@class="contentrow2"]//td[3]'
-            docnum = self.driver.find_element(By.XPATH,docnumXpath)
-            self.allfilelist[client] = f"Zoetis-invoices-{docnum.get_attribute('innerHTML')}"
-            sleep(2)
 
-            downloadXpath = '//*[@alt="Download invoice"]'
-            download = WebDriverWait(self.driver, 30).until(EC.element_to_be_clickable((By.XPATH, downloadXpath)))
-            download.click()
-            sleep(8)
-
-
-            self.driver.close()
-            self.driver.switch_to.window(parent_tab)
+            # sleep(2)
+            #
+            # downloadXpath = '//*[@alt="Download invoice"]'
+            # download = WebDriverWait(self.driver, 30).until(EC.element_to_be_clickable((By.XPATH, downloadXpath)))
+            # download.click()
+            # sleep(8)
+            #
+            #
+            #
 
             return True
         except Exception as e:
             print(str(e))
             return False
+
+    def download_invoice(self,startdate,enddate,client):
+        fromdateXpath = '//*[@name="m_do_ds_LS_S-DATFR"]'
+        fromdate = self.driver.find_element(By.XPATH,fromdateXpath)
+        fromdate.clear()
+        fromdate.send_keys(startdate)
+
+        todateXpath = '//*[@name="m_do_ds_LS_S-DATTO"]'
+        todate = self.driver.find_element(By.XPATH,todateXpath)
+        todate.clear()
+        todate.send_keys(enddate)
+
+        searchXpath = '//*[@class="b_search"]'
+        search = WebDriverWait(self.driver, 30).until(EC.element_to_be_clickable((By.XPATH, searchXpath)))
+        search.click()
+
+
+        itemsXpath = '//*[@name="m_do_dl_GV_MAXVIEW" and @class="prinputDef7"]'
+        items = WebDriverWait(self.driver, 30).until(EC.element_to_be_clickable((By.XPATH, itemsXpath)))
+        items.click()
+
+        itemsXpath = '//*[@name="m_do_dl_GV_MAXVIEW" and @class="prinputDef7"]/option[@value="9999"]'
+        items = WebDriverWait(self.driver, 30).until(EC.element_to_be_clickable((By.XPATH, itemsXpath)))
+        items.click()
+
+        sleep(2)
+
+        docnum1Xpath = '//*[@class="contentrow2"]//td[3]'
+        docnum2Xpath = '//*[@class="contentrow1"]//td[3]'
+        docnums1 = self.driver.find_elements(By.XPATH,docnum1Xpath)
+        docnums2 = self.driver.find_elements(By.XPATH, docnum2Xpath)
+
+        for docnum1 in docnums1:
+            self.allfilelist.append([client,f"Zoetis-invoices-{docnum1.get_attribute('innerHTML')}"])
+
+        for docnum2 in docnums2:
+            self.allfilelist.append([client,f"Zoetis-invoices-{docnum2.get_attribute('innerHTML')}"])
+
+        invoicesXpath = '//*[@alt="Download invoice"]'
+        invoices = self.driver.find_elements(By.XPATH,invoicesXpath)
+
+        for invoice in invoices:
+            try:
+                self.driver.execute_script("arguments[0].click();", invoice)
+                sleep(0.5)
+            except Exception as e:
+                print(str(e))
+
+        parent_tab = self.driver.window_handles[0]
+        self.driver.close()
+        self.driver.switch_to.window(parent_tab)
+        return True
+
 
     def logout(self):
         accountXpath = '//*[text()="Accounts & Orders"]'
@@ -164,12 +214,21 @@ class Zoetis:
         else:
             return False
 
+
+
     def get_download_list(self):
         downloadedfiles = os.listdir(self.downloadPath)
         files = [x.split('.')[0] for x in downloadedfiles]
-        for client,filename in self.allfilelist.items():
-            if filename not in files:
-                print(f'Unable to download invoice for client {client}')
+        summary_wb = Workbook()
+        summary_ws = summary_wb.active
+
+        for data in self.allfilelist:
+            if data[1] not in files:
+                summary_ws.append([data[0],data[1],"Not Downloaded"])
+            else:
+                summary_ws.append([data[0],data[1],"Downloaded Sucecssfully"])
+        filepath = os.path.join(self.downloadPath,'ZoetisSummary.xlsx')
+        summary_wb.save(filepath)
         return True
 
 
@@ -178,6 +237,8 @@ class RunZoetis:
         self.gui_queue = None
 
     def run(self):
+        startdate = '02/01/2022' #MMDDYYYY
+        enddate = '02/28/2022'
         setting = 'ZoetisSettingSheet.xlsx'
         setting_wb = load_workbook(setting, data_only=True, read_only=True)
         setting_ws = setting_wb['Creds'].values
@@ -206,6 +267,10 @@ class RunZoetis:
                 if not login:
                     self.gui_queue.put({'status': f'\nError : Unable to login.'}) if self.gui_queue else None
                     return False
+                download = zoetis.download_invoice(startdate,enddate,client)
+                if not download:
+                    self.gui_queue.put({'status': f'\nError : Unable to download invoice for client {client}.'}) if self.gui_queue else None
+                    return False
                 logout = zoetis.logout()
                 if not logout:
                     self.gui_queue.put({'status': f'\nError : Unable to logout.'}) if self.gui_queue else None
@@ -214,8 +279,11 @@ class RunZoetis:
         zoetis.driver.quit()
         filelist = zoetis.get_download_list()
         if not filelist:
-            self.gui_queue.put({'status': f'\nError : Unable to get file not downloaded list.'}) if self.gui_queue else None
+            self.gui_queue.put(
+                {'status': f'\nError : Unable to get file not downloaded list.'}) if self.gui_queue else None
             return False
+
+
 
 
 if __name__ == '__main__':
